@@ -1,1 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M3U8 链接嗅探器 & 播放器</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Hls.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.0/hls.min.js"></script>
 
+    <style>
+        body {
+            background-color: #0f172a; /* Slate 900 */
+            color: #e2e8f0; /* Slate 200 */
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+        .anim-fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4 md:p-8 font-sans">
+
+    <!-- Header -->
+    <header class="w-full max-w-5xl mb-8 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <i class="fa-solid fa-satellite-dish text-cyan-400 text-3xl"></i>
+            <div>
+                <h1 class="text-2xl font-bold text-white">M3U8 嗅探器</h1>
+                <p class="text-slate-400 text-sm">链接提取与 HLS 播放测试工具</p>
+            </div>
+        </div>
+        <div class="text-xs text-slate-500 hidden md:block text-right">
+            <div><i class="fa-solid fa-shield-halved mr-1"></i>纯本地运行</div>
+            <div>无后台数据上传</div>
+        </div>
+    </header>
+
+    <main class="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Left Column: Input & Results -->
+        <div class="flex flex-col gap-6">
+            
+            <!-- Input Section -->
+            <div class="glass-panel p-6 rounded-xl shadow-lg">
+                <label class="block text-sm font-medium text-cyan-400 mb-2">
+                    <i class="fa-solid fa-code mr-1"></i> 输入内容 (URL 或 网页源码)
+                </label>
+                <textarea id="inputText" 
+                    class="w-full h-40 bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all resize-none placeholder-slate-500 font-mono"
+                    placeholder="在此处粘贴：&#10;1. 一个可能包含 m3u8 的链接&#10;2. 或者直接粘贴目标网页的源代码 (推荐: Ctrl+U -> 复制 -> 粘贴)"></textarea>
+                
+                <div class="flex justify-between items-center mt-4">
+                    <button onclick="clearInput()" class="text-slate-400 hover:text-white text-sm transition-colors">
+                        <i class="fa-solid fa-trash-can mr-1"></i>清空
+                    </button>
+                    <button onclick="detectLinks()" class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-6 py-2 rounded-lg font-medium shadow-lg transform active:scale-95 transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-magnifying-glass"></i> 开始嗅探
+                    </button>
+                </div>
+                
+                <div id="statusMsg" class="mt-3 text-xs text-center min-h-[1.5rem] opacity-0 transition-opacity"></div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="glass-panel p-6 rounded-xl shadow-lg flex-1 flex flex-col min-h-[300px]">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-white">
+                        <i class="fa-solid fa-list-ul mr-2 text-purple-400"></i>检测结果
+                    </h2>
+                    <span id="resultCount" class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded-full">0 个</span>
+                </div>
+
+                <div id="resultsList" class="flex-1 overflow-y-auto space-y-3 pr-2 max-h-[400px]">
+                    <!-- Empty State -->
+                    <div class="text-center text-slate-500 mt-10">
+                        <i class="fa-solid fa-wind text-4xl mb-3 opacity-30"></i>
+                        <p>暂无结果，请在上方粘贴内容并点击嗅探</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Player -->
+        <div class="flex flex-col gap-6">
+            <div class="glass-panel p-6 rounded-xl shadow-lg sticky top-6">
+                <div class="mb-4 flex items-center justify-between">
+                    <h2 class="text-lg font-semibold text-white">
+                        <i class="fa-solid fa-play-circle mr-2 text-green-400"></i>预览播放器
+                    </h2>
+                    <div id="playerStatus" class="text-xs text-slate-400">准备就绪</div>
+                </div>
+
+                <!-- Video Container -->
+                <div class="relative w-full pb-[56.25%] bg-black rounded-lg overflow-hidden shadow-inner border border-slate-800 group">
+                    <video id="video" class="absolute top-0 left-0 w-full h-full object-contain" controls crossorigin="anonymous"></video>
+                    <!-- Overlay for no source -->
+                    <div id="videoPlaceholder" class="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center bg-slate-900 z-10">
+                        <i class="fa-brands fa-youtube text-5xl text-slate-700 mb-2"></i>
+                        <p class="text-slate-600 text-sm">选择左侧链接进行播放</p>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <label class="text-xs text-slate-500 mb-1 block">当前播放地址：</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="currentUrl" readonly 
+                            class="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-cyan-300 truncate font-mono">
+                        <button onclick="copyCurrentUrl()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded text-xs transition-colors">
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tips -->
+                <div class="mt-6 bg-blue-900/20 border border-blue-500/20 rounded-lg p-4 text-xs text-blue-200">
+                    <h3 class="font-bold mb-2 flex items-center"><i class="fa-solid fa-circle-info mr-2"></i>使用提示</h3>
+                    <ul class="list-disc list-inside space-y-1 opacity-80">
+                        <li>如果输入的是网页 URL，工具会尝试直接请求（可能会因 CORS 失败）。</li>
+                        <li><strong>推荐方法：</strong> 打开目标视频网页，按 <kbd class="bg-slate-700 px-1 rounded">Ctrl+U</kbd> 查看源码，全选复制后粘贴到左侧输入框。</li>
+                        <li>部分加密或鉴权的 m3u8 可能无法在此播放。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        const video = document.getElementById('video');
+        const hls = new Hls();
+        const resultsList = document.getElementById('resultsList');
+        const statusMsg = document.getElementById('statusMsg');
+        const inputArea = document.getElementById('inputText');
+        const videoPlaceholder = document.getElementById('videoPlaceholder');
+        const currentUrlInput = document.getElementById('currentUrl');
+        const playerStatus = document.getElementById('playerStatus');
+
+        // 正则表达式：匹配 http/https 开头，.m3u8 结尾或包含 .m3u8 的链接
+        // 兼容带参数的 URL
+        const m3u8Regex = /(https?:\/\/[^\s"']+\.m3u8([^\s"']*))/g;
+
+        function showStatus(msg, type = 'info') {
+            statusMsg.textContent = msg;
+            statusMsg.className = `mt-3 text-xs text-center min-h-[1.5rem] transition-opacity opacity-100 ${type === 'error' ? 'text-red-400' : type === 'success' ? 'text-green-400' : 'text-slate-400'}`;
+            
+            setTimeout(() => {
+                statusMsg.classList.remove('opacity-100');
+                statusMsg.classList.add('opacity-0');
+            }, 3000);
+        }
+
+        function clearInput() {
+            inputArea.value = '';
+            showStatus('已清空输入');
+        }
+
+        async function detectLinks() {
+            const content = inputArea.value.trim();
+            if (!content) {
+                showStatus('请输入 URL 或 源代码', 'error');
+                return;
+            }
+
+            // 清空旧结果
+            resultsList.innerHTML = '<div class="text-center text-slate-500 mt-4"><i class="fa-solid fa-spinner fa-spin mr-2"></i>正在分析...</div>';
+            
+            let foundLinks = new Set(); // 使用 Set 去重
+
+            // 1. 尝试直接正则匹配输入文本 (适用于粘贴源码的情况)
+            let match;
+            while ((match = m3u8Regex.exec(content)) !== null) {
+                foundLinks.add(match[1]);
+            }
+
+            // 2. 如果输入看起来像是一个单独的 URL，尝试 fetch 源码
+            // 注意：这通常会因为 CORS 失败，但值得一试
+            const isUrl = /^(http|https):\/\/[^ "]+$/.test(content);
+            if (isUrl && !content.includes('.m3u8')) {
+                try {
+                    showStatus('尝试请求目标网页...', 'info');
+                    const response = await fetch(content);
+                    if (response.ok) {
+                        const text = await response.text();
+                        while ((match = m3u8Regex.exec(text)) !== null) {
+                            foundLinks.add(match[1]);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("CORS blocked or network error", e);
+                    showStatus('无法直接访问链接 (CORS 限制)，请粘贴源码', 'error');
+                    // 如果已经从输入框文本本身找到了链接，就不算完全失败
+                }
+            } else if (isUrl && content.includes('.m3u8')) {
+                // 如果用户直接输入了 m3u8 地址
+                foundLinks.add(content);
+            }
+
+            renderResults(Array.from(foundLinks));
+        }
+
+        function renderResults(links) {
+            resultsList.innerHTML = '';
+            document.getElementById('resultCount').textContent = `${links.length} 个`;
+
+            if (links.length === 0) {
+                resultsList.innerHTML = `
+                    <div class="text-center text-slate-500 mt-10 anim-fade-in">
+                        <i class="fa-solid fa-circle-exclamation text-4xl mb-3 text-amber-500 opacity-50"></i>
+                        <p>未找到 M3U8 链接</p>
+                        <p class="text-xs mt-2 text-slate-600">请尝试粘贴网页源代码 (Ctrl+U)</p>
+                    </div>
+                `;
+                return;
+            }
+
+            links.forEach((link, index) => {
+                const item = document.createElement('div');
+                item.className = 'bg-slate-800 p-3 rounded border border-slate-700 hover:border-cyan-500/50 transition-colors group anim-fade-in';
+                item.style.animationDelay = `${index * 0.05}s`;
+                
+                // 截取显示，防止链接过长
+                const displayLink = link.length > 60 ? link.substring(0, 30) + '...' + link.substring(link.length - 25) : link;
+
+                item.innerHTML = `
+                    <div class="flex justify-between items-start gap-2 mb-2">
+                        <div class="text-xs font-mono text-slate-300 break-all leading-tight">${displayLink}</div>
+                        <span class="text-[10px] bg-cyan-900/50 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-800">#${index + 1}</span>
+                    </div>
+                    <div class="flex gap-2 mt-2">
+                        <button onclick="playSource('${link}')" class="flex-1 bg-green-600/20 hover:bg-green-600/40 text-green-400 text-xs py-1.5 rounded transition-colors border border-green-600/30 flex items-center justify-center gap-1">
+                            <i class="fa-solid fa-play"></i> 播放
+                        </button>
+                        <button onclick="copyText('${link}')" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs py-1.5 rounded transition-colors border border-slate-600 flex items-center justify-center gap-1">
+                            <i class="fa-regular fa-copy"></i> 复制
+                        </button>
+                    </div>
+                `;
+                resultsList.appendChild(item);
+            });
+            
+            showStatus(`成功提取 ${links.length} 个链接`, 'success');
+        }
+
+        function playSource(url) {
+            currentUrlInput.value = url;
+            videoPlaceholder.style.display = 'none';
+            playerStatus.textContent = "正在加载...";
+            
+            if (Hls.isSupported()) {
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                    playerStatus.textContent = "播放中";
+                    playerStatus.className = "text-xs text-green-400";
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        playerStatus.textContent = "加载失败 (CORS 或 403)";
+                        playerStatus.className = "text-xs text-red-400";
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.log("Network error");
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                console.log("Media error");
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                hls.destroy();
+                                break;
+                        }
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // For Safari
+                video.src = url;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                    playerStatus.textContent = "播放中 (Native)";
+                });
+                video.addEventListener('error', function() {
+                    playerStatus.textContent = "播放失败";
+                    playerStatus.className = "text-xs text-red-400";
+                });
+            } else {
+                showStatus('您的浏览器不支持 HLS 播放', 'error');
+            }
+        }
+
+        function copyText(text) {
+            const tempInput = document.createElement("input");
+            tempInput.value = text;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand("copy");
+            document.body.removeChild(tempInput);
+            showStatus('链接已复制到剪贴板', 'success');
+        }
+
+        function copyCurrentUrl() {
+            const url = currentUrlInput.value;
+            if (url) copyText(url);
+        }
+
+        // Auto-detect if user pastes directly into the textarea
+        inputArea.addEventListener('paste', (e) => {
+            // Optional: Auto trigger detection on paste after a short delay
+            setTimeout(() => {
+                if(inputArea.value.length < 500) { // Only auto-detect for short texts (URLs)
+                    detectLinks(); 
+                }
+            }, 200);
+        });
+
+    </script>
+</body>
+</html>
