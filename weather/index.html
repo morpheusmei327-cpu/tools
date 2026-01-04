@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 关键修复：添加 no-referrer 策略，防止图片因防盗链无法加载 -->
+    <meta name="referrer" content="no-referrer">
+    <title>简易天气 Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .custom-scroll::-webkit-scrollbar {
+            height: 8px;
+            width: 8px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        
+        .glass {
+            background: rgba(0, 0, 0, 0.25);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #fff;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 动态背景容器 - 默认给一个深色背景 */
+        #bg-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            overflow: hidden;
+            background: linear-gradient(to bottom right, #1e3a8a, #1e40af); /* Default Fallback */
+            transition: background 1s ease;
+        }
+
+        .bg-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            opacity: 0;
+            transition: opacity 1.5s ease-in-out;
+            transform: scale(1.1);
+        }
+
+        .ken-burns {
+            animation: kenBurns 20s ease-in-out infinite alternate;
+        }
+
+        @keyframes kenBurns {
+            0% { transform: scale(1.1) translate(0, 0); }
+            100% { transform: scale(1.2) translate(-2%, -2%); }
+        }
+
+        .bg-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.5));
+            backdrop-filter: blur(0px); /* 减少模糊，让图片更清晰 */
+        }
+    </style>
+</head>
+<body class="min-h-screen text-white font-sans antialiased selection:bg-pink-500 selection:text-white">
+
+    <div id="bg-container">
+        <!-- 移除 ken-burns 初始类，加载成功后再添加，防止闪烁 -->
+        <div id="bg-layer-1" class="bg-image"></div>
+        <div id="bg-layer-2" class="bg-image"></div>
+    </div>
+    <div class="bg-overlay"></div>
+
+    <div id="loading" class="fixed inset-0 flex flex-col items-center justify-center bg-gray-900 z-50 transition-opacity duration-500">
+        <div class="loader mb-4"></div>
+        <p class="text-lg font-medium animate-pulse">正在获取定位与天气数据...</p>
+        <p id="loading-sub" class="text-xs text-blue-200 mt-2">计算当地节假日...</p>
+    </div>
+
+    <div id="app" class="w-full max-w-5xl mx-auto min-h-screen relative hidden p-4 pb-10">
+        
+        <div class="relative z-50 mb-6 fade-in max-w-md mx-auto">
+            <div class="flex gap-2">
+                <div class="relative flex-1">
+                    <input id="city-input" type="text" 
+                           placeholder="搜索城市 (如: 上海, Tokyo)" 
+                           class="w-full bg-white/20 border border-white/30 rounded-full px-4 py-2 placeholder-blue-100 focus:outline-none focus:bg-white/30 transition-colors text-white backdrop-blur-md"
+                           autocomplete="off"> 
+                    <div id="search-loader" class="absolute right-10 top-2.5 hidden">
+                        <div class="w-4 h-4 border-2 border-blue-200 border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                    <i data-lucide="search" class="absolute right-3 top-2.5 w-4 h-4 text-blue-100 opacity-70"></i>
+                </div>
+                <button onclick="initApp()" class="bg-white/20 p-2 rounded-full hover:bg-white/40 transition-colors backdrop-blur-md" title="使用当前定位">
+                    <i data-lucide="map-pin" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div id="search-results" class="absolute top-full left-0 right-0 mt-2 bg-slate-900/90 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl hidden border border-white/10 max-h-60 overflow-y-auto custom-scroll">
+            </div>
+        </div>
+
+        <header class="mb-8 pt-2 text-center fade-in">
+            <div class="flex items-center justify-center gap-2 mb-1 opacity-90">
+                <span id="location-name" class="text-sm font-medium tracking-wide bg-black/30 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">定位中...</span>
+                <span id="country-badge" class="hidden text-xs font-bold tracking-wide bg-blue-600/80 px-2 py-1 rounded-full backdrop-blur-sm border border-white/10 shadow-lg"></span>
+            </div>
+            
+            <div class="flex flex-col items-center justify-center mt-6">
+                <div id="current-icon-container" class="mb-4 transform hover:scale-110 transition-transform duration-300 drop-shadow-2xl">
+                </div>
+                <h1 id="current-temp" class="text-7xl md:text-8xl font-bold tracking-tighter mb-2 drop-shadow-lg">--°</h1>
+                <p id="current-condition" class="text-2xl font-medium text-blue-100 drop-shadow-md">--</p>
+                <div class="flex gap-4 mt-6 text-base bg-black/20 px-6 py-2 rounded-full backdrop-blur-md border border-white/10 shadow-lg">
+                    <span>最高 <span id="today-max">--</span>°</span>
+                    <span class="opacity-50">|</span>
+                    <span>最低 <span id="today-min">--</span>°</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="mb-8 fade-in" style="animation-delay: 0.1s;">
+            <div class="flex items-center justify-between mb-3 px-1">
+                <h2 class="text-xl font-semibold flex items-center gap-2 drop-shadow-md">
+                    <i data-lucide="clock" class="w-5 h-5"></i> 48小时预报
+                </h2>
+                <div class="flex items-center gap-3 text-xs text-blue-100 bg-black/30 px-3 py-1.5 rounded-lg border border-white/10 backdrop-blur-sm">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-400 shadow-[0_0_5px_rgba(96,165,250,0.8)]"></span>
+                        <span>雨</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-cyan-200 shadow-[0_0_5px_rgba(165,243,252,0.8)]"></span>
+                        <span>雪</span>
+                    </div>
+                    <span class="opacity-60 text-[10px] ml-1 border-l border-white/20 pl-2">概率%</span>
+                </div>
+            </div>
+            
+            <div class="glass rounded-3xl p-4 overflow-hidden">
+                <div id="hourly-container" class="flex overflow-x-auto gap-4 custom-scroll pb-4 items-stretch">
+                </div>
+            </div>
+        </section>
+
+        <section class="fade-in" style="animation-delay: 0.2s;">
+            <h2 class="text-xl font-semibold mb-4 px-1 flex items-center gap-2 drop-shadow-md">
+                <i data-lucide="calendar-days" class="w-5 h-5"></i> 未来15天
+            </h2>
+            <div id="daily-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            </div>
+        </section>
+        
+        <div id="error-msg" class="hidden mt-10 p-4 bg-red-500/80 rounded-xl text-center max-w-md mx-auto backdrop-blur-md">
+            <p id="error-text">获取数据失败</p>
+            <button onclick="initApp(true)" class="mt-2 bg-white text-red-600 px-4 py-1 rounded-full text-sm font-bold">使用默认位置 (北京)</button>
+        </div>
+
+        <footer class="mt-12 text-center text-xs text-blue-200/50 pb-4 drop-shadow">
+            数据来源: Open-Meteo, Nager.Date | 图片: Unsplash
+        </footer>
+    </div>
+
+    <script>
+        const DEFAULT_LAT = 39.9042; // Beijing
+        const DEFAULT_LON = 116.4074;
+        
+        let g_localHolidays = {}; 
+        let g_currentCountryCode = '';
+
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        }
+
+        // 图片源
+        const BACKGROUNDS = {
+            clear_day: "https://images.unsplash.com/photo-1622396481328-9b1b78cdd9fd?q=80&w=1920&auto=format&fit=crop",
+            clear_night: "https://images.unsplash.com/photo-1506606401543-2e73709cebb4?q=80&w=1920&auto=format&fit=crop",
+            cloudy_day: "https://images.unsplash.com/photo-1611928482623-68c51b94c451?q=80&w=1920&auto=format&fit=crop",
+            cloudy_night: "https://images.unsplash.com/photo-1534088568595-a066f410bcda?q=80&w=1920&auto=format&fit=crop",
+            rain: "https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?q=80&w=1920&auto=format&fit=crop",
+            snow: "https://images.unsplash.com/photo-1477601263568-180e2c6d046e?q=80&w=1920&auto=format&fit=crop",
+            fog: "https://images.unsplash.com/photo-1487621167305-5d248087c724?q=80&w=1920&auto=format&fit=crop",
+            thunder: "https://images.unsplash.com/photo-1605727216801-e27ce1d0cc28?q=80&w=1920&auto=format&fit=crop"
+        };
+
+        // 颜色渐变源 (兜底)
+        const GRADIENTS = {
+            clear_day: "linear-gradient(to bottom right, #3b82f6, #1d4ed8)", // Blue
+            clear_night: "linear-gradient(to bottom right, #0f172a, #1e3a8a)", // Dark Blue
+            cloudy_day: "linear-gradient(to bottom right, #64748b, #475569)", // Gray Blue
+            cloudy_night: "linear-gradient(to bottom right, #1e293b, #0f172a)", // Dark Gray
+            rain: "linear-gradient(to bottom right, #334155, #1e293b)", // Wet Gray
+            snow: "linear-gradient(to bottom right, #94a3b8, #cbd5e1)", // Light Gray
+            fog: "linear-gradient(to bottom right, #64748b, #94a3b8)", // Foggy
+            thunder: "linear-gradient(to bottom right, #312e81, #1e1b4b)" // Purple/Deep Indigo
+        };
+
+        let currentBgLayer = 1;
+
+        function updateBackground(weatherCode, isDay) {
+            let bgKey = 'clear_day';
+            const isDayBool = isDay === 1;
+
+            if (weatherCode === 0 || weatherCode === 1) bgKey = isDayBool ? 'clear_day' : 'clear_night';
+            else if (weatherCode === 2 || weatherCode === 3) bgKey = isDayBool ? 'cloudy_day' : 'cloudy_night';
+            else if (weatherCode === 45 || weatherCode === 48) bgKey = 'fog';
+            else if ((weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 82)) bgKey = 'rain';
+            else if ((weatherCode >= 71 && weatherCode <= 77) || (weatherCode >= 85 && weatherCode <= 86)) bgKey = 'snow';
+            else if (weatherCode >= 95) bgKey = 'thunder';
+
+            const imageUrl = BACKGROUNDS[bgKey];
+            const fallbackGradient = GRADIENTS[bgKey];
+            
+            // 1. 立即应用颜色渐变作为兜底
+            document.getElementById('bg-container').style.background = fallbackGradient;
+
+            const nextLayerId = currentBgLayer === 1 ? 'bg-layer-2' : 'bg-layer-1';
+            const currentLayerId = currentBgLayer === 1 ? 'bg-layer-1' : 'bg-layer-2';
+            
+            const nextLayer = document.getElementById(nextLayerId);
+            const currentLayer = document.getElementById(currentLayerId);
+            
+            // 2. 尝试加载图片
+            const img = new Image();
+            
+            // 在设置 src 之前绑定 onload
+            img.onload = () => {
+                nextLayer.style.backgroundImage = `url('${imageUrl}')`;
+                nextLayer.classList.add('ken-burns'); // 重新开启动画
+                nextLayer.style.opacity = '1';
+                currentLayer.style.opacity = '0';
+                
+                // 动画复位
+                setTimeout(() => {
+                    currentLayer.style.backgroundImage = 'none';
+                    currentLayer.classList.remove('ken-burns');
+                }, 1500);
+
+                currentBgLayer = currentBgLayer === 1 ? 2 : 1;
+            };
+
+            img.onerror = () => {
+                console.warn(`Background image failed to load: ${imageUrl}. Keeping gradient.`);
+                // 图片加载失败，保持渐变背景，不做任何操作
+                // 也可以移除旧图层以显示纯渐变
+                currentLayer.style.opacity = '0';
+            };
+
+            img.src = imageUrl;
+        }
+
+        function getWeatherDetails(code) {
+            const map = {
+                0: { text: "晴朗", icon: "sun" }, 1: { text: "晴间多云", icon: "cloud-sun" }, 2: { text: "多云", icon: "cloud" },
+                3: { text: "阴", icon: "cloud" }, 45: { text: "雾", icon: "cloud-fog" }, 48: { text: "雾凇", icon: "cloud-fog" },
+                51: { text: "毛毛雨", icon: "cloud-drizzle" }, 53: { text: "小雨", icon: "cloud-drizzle" }, 55: { text: "中雨", icon: "cloud-rain" },
+                56: { text: "冻雨", icon: "snowflake" }, 57: { text: "强冻雨", icon: "snowflake" }, 61: { text: "小雨", icon: "cloud-rain" },
+                63: { text: "中雨", icon: "cloud-rain" }, 65: { text: "大雨", icon: "cloud-rain-wind" }, 66: { text: "冻雨", icon: "snowflake" },
+                67: { text: "强冻雨", icon: "snowflake" }, 71: { text: "小雪", icon: "snowflake" }, 73: { text: "中雪", icon: "snowflake" },
+                75: { text: "大雪", icon: "snowflake" }, 77: { text: "雪粒", icon: "snowflake" }, 80: { text: "阵雨", icon: "cloud-rain" },
+                81: { text: "强阵雨", icon: "cloud-rain-wind" }, 82: { text: "暴雨", icon: "cloud-rain-wind" }, 85: { text: "阵雪", icon: "snowflake" },
+                86: { text: "强阵雪", icon: "snowflake" }, 95: { text: "雷雨", icon: "cloud-lightning" }, 96: { text: "雷雨伴冰雹", icon: "cloud-lightning" },
+                99: { text: "雷雨伴强冰雹", icon: "cloud-lightning" }
+            };
+            return map[code] || { text: "未知", icon: "help-circle" };
+        }
+
+        function getDayName(dateStr) {
+            const date = new Date(dateStr);
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            const target = new Date(date);
+            target.setHours(0,0,0,0);
+            
+            const diff = (target - today) / (1000 * 60 * 60 * 24);
+            if (diff === 0) return "今天";
+            if (diff === 1) return "明天";
+            if (diff === 2) return "后天";
+            const days = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+            return days[date.getDay()];
+        }
+
+        function formatTime(isoString) {
+            const date = new Date(isoString);
+            return `${date.getHours().toString().padStart(2, '0')}:00`;
+        }
+        
+        function formatSunTime(date) {
+             return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        }
+
+        function getWeekNumber(dateStr) {
+            const parts = dateStr.split('-');
+            const d = new Date(parts[0], parts[1] - 1, parts[2]);
+            d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+            const yearStart = new Date(d.getFullYear(), 0, 1);
+            const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return weekNo;
+        }
+
+        function getHolidayName(dateObj) {
+            const year = dateObj.getFullYear();
+            const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+            const day = dateObj.getDate().toString().padStart(2, '0');
+            const dayOfWeek = dateObj.getDay(); 
+            
+            const fullDateStr = `${year}-${month}-${day}`;
+            const shortDateStr = `${month}-${day}`;
+
+            if (g_localHolidays[fullDateStr]) {
+                return g_localHolidays[fullDateStr];
+            }
+
+            const fixed = {
+                '01-01': '元旦',
+                '02-14': '情人节',
+                '03-08': '妇女节',
+                '05-01': '劳动节 (CN)',
+                '12-24': '平安夜',
+                '12-25': '圣诞节',
+                '12-26': '节礼日',
+                '12-31': '跨年夜'
+            };
+            if (fixed[shortDateStr]) return fixed[shortDateStr];
+
+            const m = dateObj.getMonth() + 1;
+            const d = dateObj.getDate();
+
+            if (m === 1 && dayOfWeek === 1 && d >= 15 && d <= 21) return '马丁路德金日 (US)';
+            if (m === 2 && dayOfWeek === 1 && d >= 15 && d <= 21) return '总统日 (US)';
+            if (m === 5 && dayOfWeek === 1 && d + 7 > 31) return '阵亡将士日 (US)';
+            if (m === 6 && d === 19) return '六月节 (US)';
+            if (m === 7 && d === 4) return '独立日 (US)';
+            if (m === 9 && dayOfWeek === 1 && d <= 7) return '劳动节 (US/CA)';
+            if (m === 10 && dayOfWeek === 1 && d >= 8 && d <= 14) return '哥伦布日 (US)';
+            if (m === 11 && d === 11) return '老兵节 (US)';
+            if (m === 11 && dayOfWeek === 4 && d >= 22 && d <= 28) return '感恩节 (US)';
+
+            if (m === 7 && d === 1) return '加拿大国庆 (CA)';
+            if (m === 5 && dayOfWeek === 1 && d >= 18 && d <= 24) return '维多利亚日 (CA)';
+            if (m === 10 && dayOfWeek === 1 && d >= 8 && d <= 14) return '感恩节 (CA)';
+
+            if (g_currentCountryCode === 'CN' || g_currentCountryCode === '') {
+                 if (year === 2025) {
+                    if (shortDateStr === '01-28') return '除夕';
+                    if (shortDateStr === '01-29') return '春节';
+                    if (shortDateStr === '04-04') return '清明';
+                    if (shortDateStr === '05-31') return '端午';
+                    if (shortDateStr === '10-01') return '国庆/中秋';
+                    if (shortDateStr === '10-06') return '中秋';
+                 }
+                 if (year === 2026) {
+                    if (shortDateStr === '02-16') return '除夕';
+                    if (shortDateStr === '02-17') return '春节';
+                    if (shortDateStr === '04-05') return '清明';
+                    if (shortDateStr === '06-19') return '端午';
+                    if (shortDateStr === '09-25') return '中秋';
+                    if (shortDateStr === '10-01') return '国庆';
+                 }
+            }
+
+            return null;
+        }
+
+        async function fetchLocalHolidays(countryCode) {
+            if (!countryCode) return;
+            g_currentCountryCode = countryCode; 
+            g_localHolidays = {}; 
+
+            const year = new Date().getFullYear();
+            const yearsToFetch = [year, year + 1];
+
+            try {
+                const requests = yearsToFetch.map(y => 
+                    fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/${countryCode}`)
+                        .then(res => {
+                            if (!res.ok) throw new Error(res.status);
+                            return res.json();
+                        })
+                        .catch(err => [])
+                );
+                
+                const results = await Promise.all(requests);
+                const allHolidays = results.flat();
+
+                if (allHolidays.length > 0) {
+                    allHolidays.forEach(h => {
+                        g_localHolidays[h.date] = h.localName || h.name; 
+                    });
+                } 
+            } catch (e) {
+                console.warn("Holiday fetch error:", e);
+            }
+        }
+
+        async function handleSearch() {
+            const input = document.getElementById('city-input');
+            const searchLoader = document.getElementById('search-loader');
+            const query = input.value.trim();
+            const resultsContainer = document.getElementById('search-results');
+            
+            if (!query) {
+                resultsContainer.classList.add('hidden');
+                resultsContainer.innerHTML = '';
+                searchLoader.classList.add('hidden');
+                return;
+            }
+
+            searchLoader.classList.remove('hidden');
+            resultsContainer.classList.remove('hidden');
+            
+            try {
+                const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=zh&format=json`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+
+                resultsContainer.innerHTML = '';
+                searchLoader.classList.add('hidden');
+
+                if (!data || !data.results || data.results.length === 0) {
+                    resultsContainer.innerHTML = '<div class="p-3 text-center text-sm text-gray-400">未找到城市</div>';
+                    return;
+                }
+
+                data.results.forEach(city => {
+                    const div = document.createElement('div');
+                    div.className = "p-3 hover:bg-white/10 cursor-pointer border-b border-white/5 last:border-0 flex justify-between items-center group transition-colors";
+                    
+                    const name = city.name;
+                    const admin1 = city.admin1 || '';
+                    const country = city.country || '';
+                    const cc = city.country_code ? city.country_code.toUpperCase() : '';
+                    
+                    let subDetails = [admin1, country].filter(x => x && x !== name).join(', ');
+
+                    div.innerHTML = `
+                        <div class="flex flex-col overflow-hidden">
+                            <span class="font-bold text-white group-hover:text-yellow-300 transition-colors flex items-center gap-2 truncate">
+                                ${name}
+                                ${cc ? `<img src="https://open-meteo.com/images/country-flags/${cc.toLowerCase()}.svg" class="w-4 h-auto opacity-70" alt="${cc}"/>` : ''}
+                            </span>
+                            <span class="text-xs text-gray-400 ml-0.5 truncate max-w-[200px]">${subDetails}</span>
+                        </div>
+                        <span class="text-xs bg-blue-600/30 group-hover:bg-blue-600/60 px-2 py-0.5 rounded text-blue-100 transition-colors shrink-0">选择</span>
+                    `;
+                    div.onclick = () => {
+                        selectCity(city.latitude, city.longitude, name, cc);
+                    };
+                    resultsContainer.appendChild(div);
+                });
+
+            } catch (e) {
+                console.error(e);
+                searchLoader.classList.add('hidden');
+                resultsContainer.innerHTML = '<div class="p-3 text-center text-sm text-red-400">网络错误</div>';
+            }
+        }
+
+        function selectCity(lat, lon, nameOverride, countryCode) {
+            const resultsContainer = document.getElementById('search-results');
+            const input = document.getElementById('city-input');
+            
+            resultsContainer.classList.add('hidden');
+            input.value = ''; 
+            document.getElementById('loading').classList.remove('hidden', 'opacity-0');
+            
+            loadWeatherData(lat, lon, nameOverride, countryCode);
+        }
+
+        function initSearch() {
+            const input = document.getElementById('city-input');
+            input.addEventListener('input', debounce(handleSearch, 400));
+            input.addEventListener('focus', () => {
+                if(input.value.trim().length > 0) document.getElementById('search-results').classList.remove('hidden');
+            });
+        }
+
+        document.addEventListener('click', (e) => {
+            const container = document.getElementById('search-results');
+            const input = document.getElementById('city-input');
+            if (!container.contains(e.target) && e.target !== input) container.classList.add('hidden');
+        });
+
+        async function fetchWeatherData(lat, lon) {
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=16`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("API Network error");
+            return await response.json();
+        }
+
+        async function fetchReverseGeocode(lat, lon) {
+            try {
+                const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=zh&format=json`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if(data.results && data.results.length > 0) {
+                    const addr = data.results[0];
+                    return { name: addr.name, country_code: addr.country_code };
+                }
+            } catch(e) { console.warn("Reverse geocode failed", e); }
+            return null;
+        }
+
+        function renderCurrent(data, customName, countryCode) {
+            const current = data.current;
+            const dailyToday = data.daily;
+            const details = getWeatherDetails(current.weather_code);
+            
+            updateBackground(current.weather_code, current.is_day);
+
+            let locationDisplay = customName 
+                ? `${customName}` 
+                : `经度 ${data.longitude.toFixed(1)}, 纬度 ${data.latitude.toFixed(1)}`;
+                
+            document.getElementById('location-name').textContent = locationDisplay;
+            
+            const badge = document.getElementById('country-badge');
+            if(countryCode) {
+                badge.textContent = countryCode;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+
+            document.getElementById('current-temp').textContent = `${Math.round(current.temperature_2m)}°`;
+            document.getElementById('current-condition').textContent = details.text;
+            document.getElementById('today-max').textContent = Math.round(dailyToday.temperature_2m_max[0]);
+            document.getElementById('today-min').textContent = Math.round(dailyToday.temperature_2m_min[0]);
+
+            const iconContainer = document.getElementById('current-icon-container');
+            iconContainer.innerHTML = `<i data-lucide="${details.icon}" class="w-24 h-24 md:w-32 md:h-32 text-yellow-300 filter drop-shadow-lg"></i>`;
+        }
+
+        function renderHourly(hourlyData, dailyData) {
+            const container = document.getElementById('hourly-container');
+            container.innerHTML = '';
+            
+            const now = new Date();
+            let currentHourIndex = hourlyData.time.findIndex(t => new Date(t) >= now);
+            if (currentHourIndex === -1) currentHourIndex = 0;
+            const maxHours = 48;
+            
+            let timelineItems = [];
+            for (let i = currentHourIndex; i < currentHourIndex + maxHours && i < hourlyData.time.length; i++) {
+                timelineItems.push({
+                    type: 'weather',
+                    time: new Date(hourlyData.time[i]),
+                    temp: Math.round(hourlyData.temperature_2m[i]),
+                    precipProb: hourlyData.precipitation_probability[i],
+                    weatherCode: hourlyData.weather_code[i]
+                });
+            }
+
+            if (timelineItems.length > 0) {
+                const startTime = timelineItems[0].time;
+                const endTime = timelineItems[timelineItems.length - 1].time;
+                for(let i=0; i<dailyData.time.length; i++) {
+                    const sunrise = new Date(dailyData.sunrise[i]);
+                    const sunset = new Date(dailyData.sunset[i]);
+                    if (sunrise >= startTime && sunrise <= endTime) timelineItems.push({ type: 'sunrise', time: sunrise });
+                    if (sunset >= startTime && sunset <= endTime) timelineItems.push({ type: 'sunset', time: sunset });
+                }
+            }
+            timelineItems.sort((a, b) => a.time - b.time);
+
+            let lastDateStr = "";
+            timelineItems.forEach((item, index) => {
+                const dateStr = `${item.time.getMonth() + 1}月${item.time.getDate()}日`;
+                if (index > 0 && lastDateStr !== dateStr) {
+                    const divider = document.createElement('div');
+                    divider.className = "flex flex-col justify-center items-center px-2 min-w-[40px] border-l border-white/20";
+                    divider.innerHTML = `<span class="text-[10px] text-blue-200 writing-vertical-lr tracking-widest opacity-70 border-white/20 pl-2" style="writing-mode: vertical-rl;">${dateStr}</span>`;
+                    container.appendChild(divider);
+                }
+                lastDateStr = dateStr;
+
+                const el = document.createElement('div');
+                if (item.type === 'weather') {
+                    const details = getWeatherDetails(item.weatherCode);
+                    let precipBarColor = 'bg-blue-400';
+                    if (details.text.includes('雪') || details.text.includes('冻')) precipBarColor = 'bg-cyan-200';
+                    const barHeight = Math.max(4, (item.precipProb / 100) * 40);
+                    const barOpacity = item.precipProb > 0 ? 1 : 0.3;
+                    const isNow = index === 0;
+
+                    el.className = "flex flex-col items-center justify-between min-w-[70px] p-3 rounded-2xl hover:bg-white/10 transition-colors shrink-0";
+                    el.innerHTML = `
+                        <span class="text-xs font-medium opacity-80 mb-2 whitespace-nowrap">${isNow ? '现在' : formatTime(item.time.toISOString())}</span>
+                        <i data-lucide="${details.icon}" class="w-6 h-6 mb-2 text-white/90 drop-shadow-md"></i>
+                        <span class="text-lg font-bold mb-1">${item.temp}°</span>
+                        <div class="flex flex-col items-center gap-1 w-full h-[50px] justify-end">
+                            <span class="text-[10px] text-blue-100">${item.precipProb}%</span>
+                            <div class="w-1.5 rounded-full ${precipBarColor} shadow-[0_0_8px_rgba(255,255,255,0.4)]" style="height: ${barHeight}px; opacity: ${barOpacity}"></div>
+                        </div>
+                    `;
+                } else if (item.type === 'sunrise') {
+                    el.className = "flex flex-col items-center justify-center min-w-[60px] p-2 rounded-2xl bg-gradient-to-b from-orange-400/30 to-yellow-400/10 border border-yellow-400/30 shrink-0 mx-1 backdrop-blur-sm";
+                    el.innerHTML = `
+                        <span class="text-[10px] text-yellow-100 mb-2 font-medium">日出</span>
+                        <i data-lucide="sunrise" class="w-6 h-6 text-yellow-300 mb-1 drop-shadow-[0_0_5px_rgba(253,224,71,0.5)]"></i>
+                        <span class="text-xs font-bold text-yellow-100">${formatSunTime(item.time)}</span>
+                    `;
+                } else if (item.type === 'sunset') {
+                    el.className = "flex flex-col items-center justify-center min-w-[60px] p-2 rounded-2xl bg-gradient-to-b from-indigo-900/50 to-purple-900/50 border border-purple-400/30 shrink-0 mx-1 backdrop-blur-sm";
+                    el.innerHTML = `
+                        <span class="text-[10px] text-purple-100 mb-2 font-medium">日落</span>
+                        <i data-lucide="sunset" class="w-6 h-6 text-orange-400 mb-1 drop-shadow-[0_0_5px_rgba(251,146,60,0.5)]"></i>
+                        <span class="text-xs font-bold text-purple-100">${formatSunTime(item.time)}</span>
+                    `;
+                }
+                container.appendChild(el);
+            });
+        }
+
+        function renderDaily(dailyData) {
+            const container = document.getElementById('daily-container');
+            container.innerHTML = '';
+            
+            let lastWeekNum = -1;
+
+            for (let i = 0; i < dailyData.time.length; i++) {
+                const dateStr = dailyData.time[i];
+                const parts = dateStr.split('-');
+                const dateObj = new Date(parts[0], parts[1]-1, parts[2]);
+                
+                const max = Math.round(dailyData.temperature_2m_max[i]);
+                const min = Math.round(dailyData.temperature_2m_min[i]);
+                const code = dailyData.weather_code[i];
+                const details = getWeatherDetails(code);
+                
+                const holidayName = getHolidayName(dateObj);
+
+                const currentWeekNum = getWeekNumber(dateStr);
+                if (currentWeekNum !== lastWeekNum) {
+                    const header = document.createElement('div');
+                    header.className = "col-span-full text-sm font-bold text-white/90 mt-6 mb-2 pl-3 border-l-4 border-yellow-400 flex items-center drop-shadow-md";
+                    header.innerHTML = `第 ${currentWeekNum} 周 <span class="text-xs font-normal text-white/50 ml-2">(${parts[0]})</span>`;
+                    container.appendChild(header);
+                    lastWeekNum = currentWeekNum;
+                }
+                
+                const month = dateObj.getMonth() + 1;
+                const day = dateObj.getDate();
+                const dateText = `${month}月${day}日`;
+                const rangeMin = -10; 
+                const rangeMax = 40;
+                const totalRange = rangeMax - rangeMin;
+                const leftPos = ((min - rangeMin) / totalRange) * 100;
+                const width = ((max - min) / totalRange) * 100;
+
+                const row = document.createElement('div');
+                row.className = "flex items-center justify-between p-3 glass rounded-2xl hover:bg-white/20 transition-all cursor-default relative overflow-hidden group";
+                
+                if (holidayName) row.classList.add('border-red-400/40', 'bg-red-500/5');
+
+                row.innerHTML = `
+                    <div class="w-24 flex flex-col justify-center relative z-10">
+                        <span class="font-medium text-sm group-hover:scale-105 transition-transform">${getDayName(dateStr)}</span>
+                        <span class="text-[10px] opacity-70">${dateText}</span>
+                        ${holidayName ? `<span class="inline-block mt-1 text-[9px] text-red-50 bg-red-600/80 px-1.5 py-0.5 rounded w-fit leading-tight shadow-sm backdrop-blur-sm">${holidayName}</span>` : ''}
+                    </div>
+                    <div class="flex flex-col items-center w-10 relative z-10">
+                        <i data-lucide="${details.icon}" class="w-6 h-6 drop-shadow-sm group-hover:scale-110 transition-transform"></i>
+                    </div>
+                    <div class="flex-1 text-xs text-center px-1 opacity-80 hidden sm:block md:hidden lg:block relative z-10">
+                        ${details.text}
+                    </div>
+                    <div class="flex items-center gap-2 w-28 md:w-auto md:flex-1 lg:w-32 relative z-10">
+                        <span class="w-6 text-right text-sm opacity-90 font-medium">${min}°</span>
+                        <div class="flex-1 h-1.5 bg-black/40 rounded-full relative overflow-hidden backdrop-blur-sm">
+                            <div class="absolute h-full bg-gradient-to-r from-cyan-300 to-yellow-400 rounded-full opacity-90 shadow-[0_0_5px_rgba(255,255,255,0.3)]" 
+                                 style="left: ${leftPos}%; width: ${width}%;"></div>
+                        </div>
+                        <span class="w-6 text-left text-sm font-bold">${max}°</span>
+                    </div>
+                    ${holidayName ? `<div class="absolute inset-0 pointer-events-none bg-gradient-to-r from-red-500/10 to-transparent"></div>` : ''}
+                `;
+                container.appendChild(row);
+            }
+        }
+
+        async function loadWeatherData(latitude, longitude, customName = null, countryCode = null) {
+            const loading = document.getElementById('loading');
+            const app = document.getElementById('app');
+            const errorMsg = document.getElementById('error-msg');
+            const loadingSub = document.getElementById('loading-sub');
+            
+            try {
+                let finalName = customName;
+                let finalCountryCode = countryCode;
+
+                if (!finalName || !finalCountryCode) {
+                    loadingSub.textContent = "获取详细地址信息...";
+                    const geoInfo = await fetchReverseGeocode(latitude, longitude);
+                    if (geoInfo) {
+                        if(!finalName) finalName = geoInfo.name || "未知位置";
+                        if(!finalCountryCode) finalCountryCode = geoInfo.country_code;
+                    }
+                }
+                
+                if (finalCountryCode) {
+                    loadingSub.textContent = `获取 ${finalCountryCode} 节假日数据...`;
+                    await fetchLocalHolidays(finalCountryCode);
+                }
+
+                loadingSub.textContent = "获取气象数据...";
+                const data = await fetchWeatherData(latitude, longitude);
+                
+                renderCurrent(data, finalName, finalCountryCode);
+                renderHourly(data.hourly, data.daily);
+                renderDaily(data.daily);
+                
+                lucide.createIcons();
+
+                loading.classList.add('opacity-0');
+                setTimeout(() => {
+                    loading.classList.add('hidden');
+                    app.classList.remove('hidden');
+                }, 500);
+
+            } catch (e) {
+                console.error(e);
+                loading.classList.add('hidden');
+                app.classList.remove('hidden');
+                errorMsg.classList.remove('hidden');
+                document.getElementById('error-text').textContent = "无法连接天气服务，请检查网络。";
+            }
+        }
+
+        async function initApp(forceDefault = false) {
+            const loading = document.getElementById('loading');
+            const errorMsg = document.getElementById('error-msg');
+            const input = document.getElementById('city-input');
+
+            loading.classList.remove('opacity-0', 'hidden');
+            errorMsg.classList.add('hidden');
+            if(input) input.value = ''; 
+
+            if (forceDefault) {
+                loadWeatherData(DEFAULT_LAT, DEFAULT_LON, "中国, 北京 (默认)", "CN");
+                return;
+            }
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        loadWeatherData(position.coords.latitude, position.coords.longitude);
+                    },
+                    (error) => {
+                        console.warn("Geolocation denied, using default.");
+                        loadWeatherData(DEFAULT_LAT, DEFAULT_LON, "中国, 北京 (默认)", "CN");
+                    }
+                );
+            } else {
+                loadWeatherData(DEFAULT_LAT, DEFAULT_LON, "中国, 北京 (默认)", "CN");
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initSearch();
+            initApp();
+        });
+
+    </script>
+</body>
+</html>
