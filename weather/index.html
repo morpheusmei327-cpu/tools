@@ -318,7 +318,7 @@
             const date = new Date(isoString);
             return `${date.getHours().toString().padStart(2, '0')}:00`;
         }
-        
+
         function formatSunTime(date) {
              return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
         }
@@ -404,24 +404,28 @@
             const year = new Date().getFullYear();
             const yearsToFetch = [year, year + 1];
 
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 2000));
+
             try {
-                const requests = yearsToFetch.map(y => 
+                const fetchPromise = Promise.all(yearsToFetch.map(y => 
                     fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/${countryCode}`)
                         .then(res => {
                             if (!res.ok) throw new Error(res.status);
                             return res.json();
                         })
                         .catch(err => [])
-                );
+                ));
                 
-                const results = await Promise.all(requests);
+                const results = await Promise.race([fetchPromise, timeoutPromise]);
                 const allHolidays = results.flat();
 
-                if (allHolidays.length > 0) {
+                if (allHolidays && allHolidays.length > 0) {
                     allHolidays.forEach(h => {
                         g_localHolidays[h.date] = h.localName || h.name; 
                     });
-                } 
+                } else {
+                    console.log("Holiday fetch timed out or returned empty, using built-in fallback.");
+                }
             } catch (e) {
                 console.warn("Holiday fetch error:", e);
             }
