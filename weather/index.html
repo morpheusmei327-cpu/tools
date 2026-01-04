@@ -619,10 +619,9 @@
 
             if (!tempArray && hourlyData.temperature_2m_cma_grapes_global) {
                 tempArray = hourlyData.temperature_2m_cma_grapes_global;
-                precipProbArray = hourlyData.precipitation_probability_cma_grapes_global || hourlyData.precipitation_probability_gfs_global;
+                // FIX: Priority given to GFS for probability as CMA lacks it
+                precipProbArray = hourlyData.precipitation_probability_gfs_global || hourlyData.precipitation_probability_cma_grapes_global;
                 weatherCodeArray = hourlyData.weather_code_cma_grapes_global;
-                
-                if(!precipProbArray) precipProbArray = hourlyData.precipitation_probability_gfs_global;
             } else if (!tempArray && hourlyData.temperature_2m_gfs_global) {
                  tempArray = hourlyData.temperature_2m_gfs_global;
                  precipProbArray = hourlyData.precipitation_probability_gfs_global;
@@ -636,11 +635,13 @@
             
             let timelineItems = [];
             for (let i = currentHourIndex; i < currentHourIndex + maxHours && i < timeArray.length; i++) {
+                const prob = (precipProbArray && precipProbArray[i] != null) ? precipProbArray[i] : 0;
+                
                 timelineItems.push({
                     type: 'weather',
                     time: new Date(timeArray[i]),
                     temp: Math.round(tempArray[i]),
-                    precipProb: precipProbArray ? precipProbArray[i] : 0,
+                    precipProb: prob,
                     weatherCode: weatherCodeArray[i]
                 });
             }
