@@ -513,7 +513,11 @@
             input.value = ''; 
             document.getElementById('loading').classList.remove('hidden', 'opacity-0');
             
-            loadWeatherData(lat, lon, nameOverride, countryCode);
+            // Fix: ensure these are numbers
+            const safeLat = parseFloat(lat);
+            const safeLon = parseFloat(lon);
+            
+            loadWeatherData(safeLat, safeLon, nameOverride, countryCode);
         }
 
         function initSearch() {
@@ -530,11 +534,30 @@
             if (!container.contains(e.target) && e.target !== input) container.classList.add('hidden');
         });
 
+        // Fixed fetchWeatherData with retry and validation
         async function fetchWeatherData(lat, lon) {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=16`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error("API Network error");
-            return await response.json();
+            if (lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) {
+                throw new Error("无效的经纬度参数");
+            }
+            // Format to 4 decimals to ensure valid URL and better caching
+            const safeLat = Number(lat).toFixed(4);
+            const safeLon = Number(lon).toFixed(4);
+
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${safeLat}&longitude=${safeLon}&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=16`;
+            
+            let lastError;
+            for(let i=0; i<3; i++) {
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                    return await response.json();
+                } catch(e) {
+                    lastError = e;
+                    console.warn(`Weather fetch attempt ${i+1} failed, retrying...`);
+                    await new Promise(r => setTimeout(r, 1000 * (i+1))); 
+                }
+            }
+            throw lastError;
         }
 
         async function fetchReverseGeocode(lat, lon) {
@@ -703,20 +726,20 @@
                 if (holidayName) row.classList.add('border-red-400/40', 'bg-red-500/5');
 
                 row.innerHTML = `
-                    <div class="w-24 flex flex-col justify-center relative z-10">
+                    <div class="w-16 flex flex-col justify-center relative z-10 text-center">
                         <span class="font-medium text-sm group-hover:scale-105 transition-transform">${getDayName(dateStr)}</span>
                         <span class="text-[10px] opacity-70">${dateText}</span>
                         ${holidayName ? `<span class="inline-block mt-1 text-[9px] text-red-50 bg-red-600/80 px-1.5 py-0.5 rounded w-fit leading-tight shadow-sm backdrop-blur-sm">${holidayName}</span>` : ''}
                     </div>
-                    <div class="flex flex-col items-center w-10 relative z-10">
+                    <div class="flex flex-col items-center w-8 relative z-10">
                         <i data-lucide="${details.icon}" class="w-6 h-6 drop-shadow-sm group-hover:scale-110 transition-transform"></i>
                     </div>
-                    <div class="flex-1 text-xs text-center px-1 opacity-80 hidden sm:block md:hidden lg:block relative z-10">
+                    <div class="w-20 text-xs text-center px-1 opacity-80 hidden sm:block md:hidden lg:block relative z-10">
                         ${details.text}
                     </div>
-                    <div class="flex items-center gap-2 w-28 md:w-auto md:flex-1 lg:w-32 relative z-10">
+                    <div class="flex-1 flex items-center gap-2 min-w-0 relative z-10 ml-2">
                         <span class="w-6 text-right text-sm opacity-90 font-medium">${min}°</span>
-                        <div class="flex-1 h-1.5 bg-black/40 rounded-full relative overflow-hidden backdrop-blur-sm">
+                        <div class="flex-1 h-2 bg-black/40 rounded-full relative overflow-hidden backdrop-blur-sm">
                             <div class="absolute h-full bg-gradient-to-r from-cyan-300 to-yellow-400 rounded-full opacity-90 shadow-[0_0_5px_rgba(255,255,255,0.3)]" 
                                  style="left: ${leftPos}%; width: ${width}%;"></div>
                         </div>
