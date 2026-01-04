@@ -398,13 +398,20 @@
 
         async function fetchLocalHolidays(countryCode) {
             if (!countryCode) return;
+            
+            // 跳过中国地区请求
+            if (countryCode === 'CN') {
+                return;
+            }
+
             g_currentCountryCode = countryCode; 
             g_localHolidays = {}; 
 
             const year = new Date().getFullYear();
             const yearsToFetch = [year, year + 1];
 
-            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 2000));
+            // 1秒超时
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 1000));
 
             try {
                 const fetchPromise = Promise.all(yearsToFetch.map(y => 
@@ -423,8 +430,6 @@
                     allHolidays.forEach(h => {
                         g_localHolidays[h.date] = h.localName || h.name; 
                     });
-                } else {
-                    console.log("Holiday fetch timed out or returned empty, using built-in fallback.");
                 }
             } catch (e) {
                 console.warn("Holiday fetch error:", e);
@@ -509,6 +514,7 @@
             loadWeatherData(safeLat, safeLon, nameOverride, countryCode);
         }
 
+        // Added missing function definition
         function initSearch() {
             const input = document.getElementById('city-input');
             input.addEventListener('input', debounce(handleSearch, 400));
@@ -623,7 +629,6 @@
 
             if (!tempArray && hourlyData.temperature_2m_cma_grapes_global) {
                 tempArray = hourlyData.temperature_2m_cma_grapes_global;
-                // FIX: Priority given to GFS for probability as CMA lacks it
                 precipProbArray = hourlyData.precipitation_probability_gfs_global || hourlyData.precipitation_probability_cma_grapes_global;
                 weatherCodeArray = hourlyData.weather_code_cma_grapes_global;
             } else if (!tempArray && hourlyData.temperature_2m_gfs_global) {
@@ -818,17 +823,22 @@
                     }
                 }
                 
+                const tasks = [];
+                
+                loadingSub.textContent = "获取气象与节假日数据...";
+                const weatherTask = fetchWeatherData(latitude, longitude, finalCountryCode);
+                tasks.push(weatherTask);
+
                 if (finalCountryCode) {
-                    loadingSub.textContent = `获取 ${finalCountryCode} 节假日数据...`;
-                    await fetchLocalHolidays(finalCountryCode);
+                    const holidayTask = fetchLocalHolidays(finalCountryCode);
+                    tasks.push(holidayTask);
                 }
 
-                loadingSub.textContent = "获取气象数据...";
-                const data = await fetchWeatherData(latitude, longitude, finalCountryCode);
+                const [weatherData] = await Promise.all(tasks);
                 
-                renderCurrent(data, finalName, finalCountryCode);
-                renderHourly(data.hourly, data.daily);
-                renderDaily(data.daily, finalCountryCode);
+                renderCurrent(weatherData, finalName, finalCountryCode);
+                renderHourly(weatherData.hourly, weatherData.daily);
+                renderDaily(weatherData.daily, finalCountryCode);
                 
                 lucide.createIcons();
 
