@@ -116,6 +116,14 @@
         <p id="loading-sub" class="text-xs text-blue-200 mt-2">正在初始化...</p>
     </div>
 
+    <!-- Data Source Disclaimer Toast -->
+    <div id="source-toast" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-md px-4 py-2 rounded-full text-xs text-white/80 z-[60] hidden pointer-events-none transition-opacity duration-500">
+        <span class="flex items-center gap-2">
+            <i data-lucide="info" class="w-3 h-3"></i>
+            优先使用中国气象局(CMA)权威数据源
+        </span>
+    </div>
+
     <div id="app" class="w-full max-w-5xl mx-auto min-h-screen relative hidden p-4 pb-10">
         
         <div class="relative z-50 mb-6 fade-in max-w-md mx-auto">
@@ -194,7 +202,6 @@
             <p id="error-text">获取数据失败</p>
             <button onclick="initApp(true)" class="mt-2 bg-white text-red-600 px-4 py-1 rounded-full text-sm font-bold">使用默认位置 (武汉)</button>
         </div>
-        
     </div>
 
     <script>
@@ -213,9 +220,8 @@
             };
         }
 
-        // 关键修复：带超时的 Fetch 函数，解决移动端 Fetch 挂起不返回的问题
         async function fetchWithTimeout(resource, options = {}) {
-            const { timeout = 5000 } = options; // 默认 5 秒超时
+            const { timeout = 5000 } = options; 
             
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
@@ -429,7 +435,6 @@
             const yearsToFetch = [year, year + 1];
 
             try {
-                // 使用 fetchWithTimeout 替代普通 fetch，并设置较短超时
                 const fetchPromise = Promise.all(yearsToFetch.map(y => 
                     fetchWithTimeout(`https://date.nager.at/api/v3/PublicHolidays/${y}/${countryCode}`, { timeout: 2000 })
                         .then(res => {
@@ -469,7 +474,6 @@
             resultsContainer.classList.remove('hidden');
             
             try {
-                // 使用 fetchWithTimeout
                 const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=zh&format=json`;
                 const response = await fetchWithTimeout(url, { timeout: 5000 });
                 const data = await response.json();
@@ -574,7 +578,6 @@
             let lastError;
             for(let i=0; i<3; i++) {
                 try {
-                    // 使用 fetchWithTimeout
                     const response = await fetchWithTimeout(url, { timeout: 8000 });
                     if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
                     return await response.json();
@@ -589,7 +592,6 @@
 
         async function fetchReverseGeocode(lat, lon) {
             try {
-                // 使用 fetchWithTimeout
                 const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=zh&format=json`;
                 const res = await fetchWithTimeout(url, { timeout: 5000 });
                 const data = await res.json();
@@ -617,6 +619,16 @@
             if(countryCode) {
                 badge.textContent = countryCode;
                 badge.classList.remove('hidden');
+                
+                if(countryCode === 'CN') {
+                    const toast = document.getElementById('source-toast');
+                    toast.classList.remove('hidden');
+                    toast.classList.remove('opacity-0');
+                    setTimeout(() => {
+                        toast.classList.add('opacity-0');
+                        setTimeout(() => toast.classList.add('hidden'), 500);
+                    }, 5000);
+                }
             } else {
                 badge.classList.add('hidden');
             }
@@ -795,6 +807,8 @@
                 
                 if (holidayName) row.classList.add('border-red-400/40', 'bg-red-500/5');
 
+                const isLowConfidence = isCN && i > 9;
+
                 row.innerHTML = `
                     <div class="w-16 flex flex-col justify-center relative z-10 text-center">
                         <span class="font-medium text-sm group-hover:scale-105 transition-transform">${getDayName(dateStr)}</span>
@@ -815,6 +829,7 @@
                         </div>
                         <span class="w-6 text-left text-sm font-bold">${max}°</span>
                     </div>
+                    ${isLowConfidence ? `<div class="absolute right-2 top-2 text-[9px] text-yellow-200/50 bg-black/40 px-1 rounded" title="远期预报仅供参考">低置信度</div>` : ''}
                     ${holidayName ? `<div class="absolute inset-0 pointer-events-none bg-gradient-to-r from-red-500/10 to-transparent"></div>` : ''}
                 `;
                 container.appendChild(row);
@@ -827,7 +842,6 @@
             const errorMsg = document.getElementById('error-msg');
             const loadingSub = document.getElementById('loading-sub');
             
-            // 立即更新状态，表明函数已调用
             loadingSub.textContent = "准备获取数据...";
 
             try {
@@ -900,14 +914,11 @@
 
             loadingSub.textContent = "正在定位...";
 
-            // 定义默认加载逻辑
             const loadDefault = () => {
                 console.warn("Geolocation timed out or failed, using default.");
                 loadWeatherData(DEFAULT_LAT, DEFAULT_LON, "中国, 武汉 (默认)", "CN");
             };
 
-            // 关键修复：设置定位超时保护 (5秒)
-            // 某些手机浏览器定位请求会无限挂起，必须手动强制熔断
             let geoTimeout = setTimeout(() => {
                 loadDefault();
             }, 5000);
@@ -915,15 +926,13 @@
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
-                        clearTimeout(geoTimeout); // 成功了，清除超时定时器
-                        // 重新允许初始化逻辑继续（防止超时后又成功导致冲突，但在 loadWeatherData 内部通常覆盖即可，这里简单处理）
+                        clearTimeout(geoTimeout); 
                         loadWeatherData(position.coords.latitude, position.coords.longitude);
                     },
                     (error) => {
-                        clearTimeout(geoTimeout); // 失败了，清除超时定时器
+                        clearTimeout(geoTimeout); 
                         loadDefault();
                     },
-                    // 增加 API 层面的超时配置
                     { timeout: 4000, maximumAge: 600000, enableHighAccuracy: false }
                 );
             } else {
