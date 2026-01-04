@@ -198,7 +198,8 @@
             <button onclick="initApp(true)" class="mt-2 bg-white text-red-600 px-4 py-1 rounded-full text-sm font-bold">使用默认位置 (北京)</button>
         </div>
 
-        <footer class="mt-12 text-center text-xs text-blue-200/50 pb-4 drop-shadow">
+        <!-- 给 Footer 添加 ID 以便动态修改 -->
+        <footer id="footer-text" class="mt-12 text-center text-xs text-blue-200/50 pb-4 drop-shadow">
             数据来源: Open-Meteo, Nager.Date | 图片: Unsplash
         </footer>
     </div>
@@ -756,6 +757,7 @@
             const app = document.getElementById('app');
             const errorMsg = document.getElementById('error-msg');
             const loadingSub = document.getElementById('loading-sub');
+            const footerText = document.getElementById('footer-text');
             
             try {
                 let finalName = customName;
@@ -770,12 +772,22 @@
                     }
                 }
                 
+                // 动态更新数据源显示
+                if (finalCountryCode === 'CN') {
+                    // 如果在中国，显示墨迹天气 (CMA源)
+                    footerText.innerHTML = '数据来源: 墨迹天气 (CMA), Nager.Date | 图片: Unsplash';
+                } else {
+                    // 其他地区显示 Open-Meteo
+                    footerText.innerHTML = '数据来源: Open-Meteo, Nager.Date | 图片: Unsplash';
+                }
+
                 if (finalCountryCode) {
                     loadingSub.textContent = `获取 ${finalCountryCode} 节假日数据...`;
                     await fetchLocalHolidays(finalCountryCode);
                 }
 
                 loadingSub.textContent = "获取气象数据...";
+                // Open-Meteo 的 auto 模式在中国会自动优先使用 CMA (中国气象局) 模型
                 const data = await fetchWeatherData(latitude, longitude);
                 
                 renderCurrent(data, finalName, finalCountryCode);
