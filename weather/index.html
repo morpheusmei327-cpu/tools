@@ -113,7 +113,7 @@
     <div id="loading" class="fixed inset-0 flex flex-col items-center justify-center bg-gray-900 z-50 transition-opacity duration-500">
         <div class="loader mb-4"></div>
         <p class="text-lg font-medium animate-pulse">正在获取定位与天气数据...</p>
-        <p id="loading-sub" class="text-xs text-blue-200 mt-2">计算当地节假日...</p>
+        <p id="loading-sub" class="text-xs text-blue-200 mt-2">正在初始化...</p>
     </div>
 
     <div id="app" class="w-full max-w-5xl mx-auto min-h-screen relative hidden p-4 pb-10">
@@ -213,6 +213,26 @@
             };
         }
 
+        // 关键修复：带超时的 Fetch 函数，解决移动端 Fetch 挂起不返回的问题
+        async function fetchWithTimeout(resource, options = {}) {
+            const { timeout = 5000 } = options; // 默认 5 秒超时
+            
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            
+            try {
+                const response = await fetch(resource, {
+                    ...options,
+                    signal: controller.signal
+                });
+                clearTimeout(id);
+                return response;
+            } catch (error) {
+                clearTimeout(id);
+                throw error;
+            }
+        }
+
         const BACKGROUNDS = {
             clear_day: "https://images.unsplash.com/photo-1622396481328-9b1b78cdd9fd?q=80&w=1920&auto=format&fit=crop",
             clear_night: "https://images.unsplash.com/photo-1506606401543-2e73709cebb4?q=80&w=1920&auto=format&fit=crop",
@@ -276,7 +296,6 @@
             };
 
             img.onerror = () => {
-                console.warn(`Background image failed to load: ${imageUrl}. Keeping gradient.`);
                 currentLayer.style.opacity = '0';
             };
 
@@ -399,7 +418,6 @@
         async function fetchLocalHolidays(countryCode) {
             if (!countryCode) return;
             
-            // 跳过中国地区请求
             if (countryCode === 'CN') {
                 return;
             }
@@ -410,12 +428,10 @@
             const year = new Date().getFullYear();
             const yearsToFetch = [year, year + 1];
 
-            // 1秒超时
-            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 1000));
-
             try {
+                // 使用 fetchWithTimeout 替代普通 fetch，并设置较短超时
                 const fetchPromise = Promise.all(yearsToFetch.map(y => 
-                    fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/${countryCode}`)
+                    fetchWithTimeout(`https://date.nager.at/api/v3/PublicHolidays/${y}/${countryCode}`, { timeout: 2000 })
                         .then(res => {
                             if (!res.ok) throw new Error(res.status);
                             return res.json();
@@ -423,7 +439,7 @@
                         .catch(err => [])
                 ));
                 
-                const results = await Promise.race([fetchPromise, timeoutPromise]);
+                const results = await fetchPromise;
                 const allHolidays = results.flat();
 
                 if (allHolidays && allHolidays.length > 0) {
@@ -432,7 +448,7 @@
                     });
                 }
             } catch (e) {
-                console.warn("Holiday fetch error:", e);
+                console.warn("Holiday fetch error or timeout:", e);
             }
         }
 
@@ -453,9 +469,9 @@
             resultsContainer.classList.remove('hidden');
             
             try {
+                // 使用 fetchWithTimeout
                 const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=zh&format=json`;
-                
-                const response = await fetch(url);
+                const response = await fetchWithTimeout(url, { timeout: 5000 });
                 const data = await response.json();
 
                 resultsContainer.innerHTML = '';
@@ -514,7 +530,6 @@
             loadWeatherData(safeLat, safeLon, nameOverride, countryCode);
         }
 
-        // Added missing function definition
         function initSearch() {
             const input = document.getElementById('city-input');
             input.addEventListener('input', debounce(handleSearch, 400));
@@ -559,7 +574,8 @@
             let lastError;
             for(let i=0; i<3; i++) {
                 try {
-                    const response = await fetch(url);
+                    // 使用 fetchWithTimeout
+                    const response = await fetchWithTimeout(url, { timeout: 8000 });
                     if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
                     return await response.json();
                 } catch(e) {
@@ -573,8 +589,9 @@
 
         async function fetchReverseGeocode(lat, lon) {
             try {
+                // 使用 fetchWithTimeout
                 const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lon}&language=zh&format=json`;
-                const res = await fetch(url);
+                const res = await fetchWithTimeout(url, { timeout: 5000 });
                 const data = await res.json();
                 if(data.results && data.results.length > 0) {
                     const addr = data.results[0];
